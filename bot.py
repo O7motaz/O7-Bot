@@ -270,7 +270,7 @@ def handle_message(update: Update, context: CallbackContext) -> None:
             # إذا لم يتمكن من قراءة الكمية، يرسل تنبيه
             context.bot.send_message(
                 chat_id=message.chat_id,
-                text=f"⚠️ **تنبيه لـ @{USERS[OMAR_ID]}:** لم أتمكن من قراءة الكمية في الطلب الذي رد عليه {user_name}. يرجى المراجعة."
+                text=f"⚠️ **تنبيه لـ عمر:** لم أتمكن من قراءة الكمية في الطلب الذي رد عليه {user_name}. يرجى المراجعة."
             )
             return
         
@@ -304,11 +304,12 @@ def main() -> None:
     updater = Updater(TELEGRAM_TOKEN)
     dispatcher = updater.dispatcher
 
-    # تسجيل الأوامر
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("tagreer_yawmi", daily_report))
-    dispatcher.add_handler(CommandHandler("tagreer_shamel", full_report))
-    dispatcher.add_handler(CommandHandler("tasefeer", reset_data))
+    # تسجيل الأوامر باللغة العربية
+    dispatcher.add_handler(CommandHandler("بدء", start))
+    dispatcher.add_handler(CommandHandler("تقرير_يومي", daily_report))
+    dispatcher.add_handler(CommandHandler("تقرير_شامل", full_report))
+    dispatcher.add_handler(CommandHandler("تصفير", reset_data))
+
 
     # تسجيل معالج الرسائل لكلمة "تم"
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
@@ -319,7 +320,7 @@ def main() -> None:
     updater.start_webhook(listen="0.0.0.0",
                           port=PORT,
                           url_path=TELEGRAM_TOKEN,
-                          webhook_url=f"https://<YOUR_APP_NAME>.onrender.com/{TELEGRAM_TOKEN}")
+                          webhook_url=f"https://work-bot-app.onrender.com/{TELEGRAM_TOKEN}")
 
     logger.info("Bot started successfully.")
     updater.idle()
