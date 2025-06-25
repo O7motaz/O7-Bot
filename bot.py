@@ -108,12 +108,21 @@ def handle_callbacks(call):
             if user_id not in data['config']['admins']:
                 return bot.answer_callback_query(call.id, "🚫 هذه الخدمة للمشرفين فقط.", show_alert=True)
             markup = types.InlineKeyboardMarkup(row_width=2)
+            # ✅ تم التعديل: إضافة تقارير العامل الشخصية إلى لوحة المشرف
             markup.add(
-                types.InlineKeyboardButton("📊 إحصائيات اليوم", callback_data="cmd:stats_today"),
-                types.InlineKeyboardButton("📅 إحصائيات مخصصة", callback_data="cmd:stats_custom"),
+                types.InlineKeyboardButton("📄 تقريري اليومي", callback_data="cmd:report_today"),
+                types.InlineKeyboardButton("📊 إحصائيات الفريق اليوم", callback_data="cmd:stats_today")
+            )
+            markup.add(
+                types.InlineKeyboardButton("📅 تقريري المخصص", callback_data="cmd:report_custom"),
+                types.InlineKeyboardButton("📅 إحصائيات الفريق المخصصة", callback_data="cmd:stats_custom")
+            )
+            markup.add(
                 types.InlineKeyboardButton("🏆 لوحة الصدارة", callback_data="cmd:leaderboard"),
-                types.InlineKeyboardButton("🔄 تصفير الكل", callback_data="cmd:reset_all"),
                 types.InlineKeyboardButton("💰 تحديد الأجر", callback_data="cmd:set_rate_prompt")
+            )
+            markup.add(
+                types.InlineKeyboardButton("🔄 تصفير الكل", callback_data="cmd:reset_all")
             )
             bot.edit_message_text("👨‍💻 **لوحة تحكم المشرف**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
         
@@ -138,7 +147,11 @@ def handle_callbacks(call):
                 types.InlineKeyboardButton("⬆️ ترقية مشرف", callback_data="dev:promote_list"),
                 types.InlineKeyboardButton("⬇️ تخفيض مشرف", callback_data="dev:demote_list")
             )
+            markup.add(types.InlineKeyboardButton("🔙 رجوع للوحة المطور", callback_data="dev:back_to_main"))
             bot.edit_message_text("👑 **إدارة الصلاحيات**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        elif command_type == "back_to_main":
+            show_developer_panel(call.message) # Re-show the main dev panel
+            bot.delete_message(call.message.chat.id, call.message.message_id) # Clean up previous message
         elif command_type == "promote_list":
             markup = types.InlineKeyboardMarkup(row_width=1)
             for worker_id_str, info in data['config']['workers'].items():
@@ -153,8 +166,8 @@ def handle_callbacks(call):
                 data['config']['admins'].append(user_to_promote)
                 update_data(data)
                 bot.answer_callback_query(call.id, "✅ تم الترقية بنجاح!")
-            call.data = "dev:promote_list"
-            handle_callbacks(call) # Refresh list
+            call.data = "dev:promote_list" # Refresh list by re-triggering the handler
+            handle_callbacks(call)
         elif command_type == "demote_list":
             markup = types.InlineKeyboardMarkup(row_width=1)
             for admin_id in data['config']['admins']:
@@ -169,8 +182,8 @@ def handle_callbacks(call):
                 data['config']['admins'].remove(user_to_demote)
                 update_data(data)
                 bot.answer_callback_query(call.id, "✅ تم التخفيض بنجاح!")
-            call.data = "dev:demote_list"
-            handle_callbacks(call) # Refresh list
+            call.data = "dev:demote_list" # Refresh list
+            handle_callbacks(call)
         else: # Prompts for text commands
             prompts = {
                 "add_worker_prompt": "لإضافة عامل، أرسل الأمر:\n`/اضافة_عامل [ID] [الاسم] [اليوزر] [الأجرة]`",
@@ -184,7 +197,7 @@ def handle_callbacks(call):
     # Command Execution Logic
     elif action == "cmd":
         command_type = params[0]
-        if command_type == "report_today": daily_report_command(call.message)
+        if command_type == "report_today": daily_report_command(call.message, for_user_id=call.from_user.id)
         elif command_type == "report_custom": bot.send_message(call.message.chat.id, "لعرض تقرير مخصص، أرسل الأمر:\n`/تقريري [YYYY-MM-DD] [YYYY-MM-DD]`")
         elif command_type == "stats_today": custom_team_report_command(call.message)
         elif command_type == "stats_custom": bot.send_message(call.message.chat.id, "لعرض إحصائيات مخصصة، أرسل الأمر:\n`/احصائيات [YYYY-MM-DD] [YYYY-MM-DD]`")
@@ -195,6 +208,8 @@ def handle_callbacks(call):
     
     # Confirmation Logic
     elif action == "confirm_reset": handle_reset_callback(call)
+    elif action == "cancel": bot.edit_message_text("👍 تم إلغاء العملية.", call.message.chat.id, call.message.message_id)
+
 
 # --- معالجات الأوامر النصية ---
 @bot.message_handler(func=lambda message: str(message.from_user.id) in get_data()['config']['workers'] and message.chat.type in ['group', 'supergroup'] and not message.text.startswith('/'))
@@ -253,11 +268,12 @@ def generate_financial_report(message, start_date, end_date, for_user_id=None):
 
 # --- معالجات الأوامر النصية للتنفيذ ---
 @bot.message_handler(commands=['تقرير'])
-def daily_report_command(message):
+def daily_report_command(message, for_user_id=None):
+    if for_user_id is None: for_user_id = message.from_user.id
     data = get_data()
-    if str(message.from_user.id) not in data['config']['workers']: return bot.reply_to(message, "🚫 هذه الخدمة غير متوفرة لك.")
+    if str(for_user_id) not in data['config']['workers']: return bot.reply_to(message, "🚫 هذه الخدمة غير متوفرة لك.")
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    generate_financial_report(message, today, today, for_user_id=message.from_user.id)
+    generate_financial_report(message, today, today, for_user_id=for_user_id)
 
 @bot.message_handler(commands=['تقريري'])
 def custom_personal_report_command(message):
@@ -288,16 +304,16 @@ def leaderboard_command(message):
     if str(message.from_user.id) not in data['config']['workers']: return bot.reply_to(message, "🚫 هذه الخدمة غير متوفرة لك.")
     seven_days_ago = datetime.now() - timedelta(days=7)
     recent_orders = [o for o in data["orders"] if o["status"] == "completed" and o.get("completion_time") and datetime.fromisoformat(o["completion_time"]) >= seven_days_ago]
-    if not recent_orders: return bot.reply_to(message, "🏆 **لوحة الصدارة الأسبوعية**\n\nلا يوجد عمل مسجل في آخر 7 أيام.")
+    if not recent_orders: return bot.send_message(message.chat.id, "🏆 **لوحة الصدارة الأسبوعية**\n\nلا يوجد عمل مسجل في آخر 7 أيام.", parse_mode='Markdown')
     leaderboard = {};
     for order in recent_orders:
         name, quantity = order.get("worker_name", "غير معروف"), order.get("quantity", 0)
         leaderboard[name] = leaderboard.get(name, 0) + quantity
     sorted_workers = sorted(leaderboard.items(), key=lambda item: item[1], reverse=True)
-    report_text = "🏆 **لوحة الصدارة لأفضل العمال (آخر 7 أيام)**\n\n"; medals = ["🥇", "🥈", "🥉"]
+    report_text = "🏆 **لوحة الصدارة لأفضل العمال (آخر 7 أيام)**\n\n"; medals = ["🥇", "🥈", "�"]
     for i, (worker, total_quantity) in enumerate(sorted_workers):
         medal = medals[i] if i < 3 else "🔹"; report_text += f"{medal} *{worker}*: {total_quantity} وحدة\n"
-    bot.reply_to(message, report_text, parse_mode='Markdown')
+    bot.send_message(message.chat.id, report_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['اضافة_عامل'])
 def add_worker_command(message):
