@@ -409,4 +409,4 @@ if __name__ == "__main__":
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
     print("O7 Bot System: Polling for messages...")
-    bot.polling(none_stop=True)
+    bot.polling(none_stop=True
