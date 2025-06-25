@@ -1,58 +1,56 @@
 import logging
 import os
+import re
 from datetime import datetime, time
 
 from pymongo import MongoClient
 from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackContext
+from telegram.ext import Application, CommandHandler, CallbackContext, MessageHandler, filters
 from telegram.constants import ParseMode
 
 # --- إعدادات أساسية ---
-# يفضل تفعيلها لمتابعة أي أخطاء قد تحدث
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-# --- تحميل المتغيرات الحساسة من بيئة النظام (مهم جداً لأمان حساباتك) ---
-# ستحتاج لإضافة هذه المتغيرات في منصة الاستضافة
+# --- تحميل المتغيرات الحساسة ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 MONGO_URI = os.environ.get('MONGO_URI')
 
 # --- الاتصال بقاعدة البيانات ---
-# تأكد من أن الرابط الذي ستضعه في متغير MONGO_URI صحيح
 try:
     client = MongoClient(MONGO_URI)
     db = client.get_database("reports_bot_db")
     tasks_collection = db.tasks
-    logging.info("تم الاتصال بقاعدة البيانات بنجاح.")
+    logging.info("تم الاتصال بقاعدة بيانات MongoDB بنجاح.")
 except Exception as e:
     logging.error(f"فشل الاتصال بقاعدة البيانات: {e}")
-    # سيتوقف البوت إذا لم يتمكن من الاتصال بقاعدة البيانات
     exit()
 
-# --- بيانات المستخدمين (يمكنك التعديل عليها أو إضافتها هنا) ---
+# --- بيانات المستخدمين ---
 USER_DATA = {
     6795122268: "عمر",
     6940043771: "اسامه",
     5615500221: "معتز"
 }
 
-
-# --- الأمر الرئيسي لإضافة إنجاز ---
+# --- ((( التعديل هنا ))) ---
+# تم تعديل هذه الدالة لتتعامل مع الرسائل النصية
 async def done_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
-    # يبحث عن اسم المستخدم في القائمة، وإذا لم يجده يستخدم اسمه الأول من تليجرام
     user_name = USER_DATA.get(user.id, user.first_name)
-
-    # التأكد من أن المستخدم أدخل كمية (رقم) بعد الأمر
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("❌ خطأ: يرجى إدخال الكمية المنجزة بعد الأمر.\nمثال: `/done 150`")
+    
+    # تقسيم الرسالة للحصول على الكمية
+    parts = update.message.text.split()
+    
+    # التحقق من أن الرسالة تحتوي على الكمية
+    if len(parts) < 2 or not parts[1].isdigit():
+        await update.message.reply_text("❌ خطأ: يرجى إدخال الكمية المنجزة بعد الأمر.\nمثال: `/تم 150`")
         return
-
-    quantity = int(context.args[0])
-
-    # إنشاء سجل للمهمة وتخزينه في قاعدة البيانات
+        
+    quantity = int(parts[1])
+    
     task_record = {
         "user_id": user.id,
         "user_name": user_name,
@@ -60,32 +58,30 @@ async def done_command(update: Update, context: CallbackContext) -> None:
         "completed_at": datetime.now()
     }
     tasks_collection.insert_one(task_record)
-
+    
     await update.message.reply_text(f"✅ تم تسجيل {quantity} تعزيز باسمك يا {user_name}!")
 
-
-# --- أوامر التقارير ---
+# --- أوامر التقارير (تبقى كما هي بدون تغيير) ---
 async def daily_report_command(update: Update, context: CallbackContext) -> None:
-    today = datetime.now().date()
-    start_of_day = datetime.combine(today, time.min)
-    end_of_day = datetime.combine(today, time.max)
-
+    today_start = datetime.combine(datetime.now().date(), time.min)
+    today_end = datetime.combine(datetime.now().date(), time.max)
+    
     pipeline = [
-        {"$match": {"completed_at": {"$gte": start_of_day, "$lte": end_of_day}}},
+        {"$match": {"completed_at": {"$gte": today_start, "$lte": today_end}}},
         {"$group": {"_id": "$user_name", "total": {"$sum": "$quantity"}}},
         {"$sort": {"total": -1}}
     ]
     results = list(tasks_collection.aggregate(pipeline))
-
+    
+    today_str = datetime.now().date().strftime('%Y-%m-%d')
     if not results:
-        report_text = f"📊 **التقرير اليومي ({today})** 📊\n\nلم يتم إنجاز أي مهام اليوم."
+        report_text = f"📊 **التقرير اليومي ({today_str})** 📊\n\nلم يتم إنجاز أي مهام اليوم."
     else:
-        report_text = f"📊 **التقرير اليومي ({today})** 📊\n\n"
+        report_text = f"📊 **التقرير اليومي ({today_str})** 📊\n\n"
         for res in results:
             report_text += f"- **{res['_id']}**: أنجز {res['total']} تعزيز\n"
-
+    
     await update.message.reply_text(text=report_text, parse_mode=ParseMode.MARKDOWN)
-
 
 async def full_report_command(update: Update, context: CallbackContext) -> None:
     pipeline = [
@@ -100,14 +96,13 @@ async def full_report_command(update: Update, context: CallbackContext) -> None:
         report_text = "📈 **التقرير المفصل** 📈\n\n"
         for res in results:
             report_text += f"- **{res['_id']}**: أنجز {res['total']} تعزيز\n"
-
+    
     await update.message.reply_text(text=report_text, parse_mode=ParseMode.MARKDOWN)
-
 
 async def calculate_payment_command(update: Update, context: CallbackContext) -> None:
     moataz_id = 5615500221
     payment_rate_per_100 = 4.5
-
+    
     pipeline = [
         {"$match": {"user_id": moataz_id}},
         {"$group": {"_id": "$user_id", "total": {"$sum": "$quantity"}}}
@@ -115,7 +110,7 @@ async def calculate_payment_command(update: Update, context: CallbackContext) ->
     result = list(tasks_collection.aggregate(pipeline))
 
     payment_text = f"💵 **حساب مستحقات معتز** 💵\n\n"
-    if not result:
+    if not result or not result[0].get('total'):
         payment_text += "لم ينجز أي مهام حتى الآن."
     else:
         total_boosts = result[0]['total']
@@ -125,37 +120,32 @@ async def calculate_payment_command(update: Update, context: CallbackContext) ->
 
     await update.message.reply_text(text=payment_text, parse_mode=ParseMode.MARKDOWN)
 
-
 async def reset_command(update: Update, context: CallbackContext) -> None:
-    # يمكنك إضافة ID المشرف هنا للتحقق من هوية المستخدم
-    # admin_id = 123456789
-    # if update.effective_user.id != admin_id:
-    #     await update.message.reply_text("هذا الأمر للمشرف فقط.")
-    #     return
-
     tasks_collection.delete_many({})
     await update.message.reply_text("✅ تم حذف جميع البيانات وبدء دورة جديدة.")
 
-
 def main() -> None:
-    """الدالة الرئيسية لتشغيل البوت"""
     if not BOT_TOKEN or not MONGO_URI:
         logging.error("المتغيرات (BOT_TOKEN, MONGO_URI) غير موجودة! يرجى إضافتها.")
         return
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # إضافة الأوامر التي سيتفاعل معها البوت
-    application.add_handler(CommandHandler(["done", "تم", "انجاز"], done_command))
+    # --- ((( التعديل هنا ))) ---
+    # Regex: للبحث عن الكلمات التي تريدها في بداية الرسالة
+    # هذا الفلتر يقبل الآن الأوامر العربية والإنجليزية
+    done_filter = filters.Regex(r'^(?:/done|/تم|/انجاز)\b')
+    
+    application.add_handler(MessageHandler(done_filter, done_command))
+    
+    # الأوامر الإنجليزية تبقى كما هي لأنها لا تخالف القواعد
     application.add_handler(CommandHandler(["daily_report", "يومي"], daily_report_command))
     application.add_handler(CommandHandler(["full_report", "مفصل"], full_report_command))
     application.add_handler(CommandHandler(["payment", "مستحقات"], calculate_payment_command))
     application.add_handler(CommandHandler(["reset", "تصفير"], reset_command))
 
-    # بدء تشغيل البوت
     logging.info("البوت قيد التشغيل...")
     application.run_polling()
-
 
 if __name__ == '__main__':
     main()
