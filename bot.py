@@ -6,10 +6,14 @@ import json
 import re
 from datetime import datetime, timedelta
 import io
+import schedule
+import threading
+import time
 
-# -- requirements.txt --
+# -- IMPORTANT: Update your requirements.txt file --
 # pyTelegramBotAPI==4.12.0
 # pymongo[srv]
+# schedule
 
 from pymongo import MongoClient
 
@@ -28,7 +32,7 @@ except Exception as e:
     exit()
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
-print("O7 Bot System: Online with Role-Based UI.")
+print("O7 Bot System: Online with Full Interactive UI.")
 
 # --- دوال مساعدة لإدارة البيانات ---
 def get_data():
@@ -81,6 +85,7 @@ def show_developer_panel(message):
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
+        types.InlineKeyboardButton("👑 إدارة الصلاحيات", callback_data="dev:manage_permissions"),
         types.InlineKeyboardButton("➕ إضافة عامل", callback_data="dev:add_worker_prompt"),
         types.InlineKeyboardButton("➖ حذف عامل", callback_data="dev:remove_worker_prompt"),
         types.InlineKeyboardButton("💸 تصفير عامل", callback_data="dev:reset_worker_prompt"),
@@ -96,72 +101,112 @@ def handle_callbacks(call):
     user_id = call.from_user.id
     action, *params = call.data.split(':')
 
-    # --- توجيه لوحات التحكم الرئيسية ---
+    # Main Panel Logic
     if action == "panel":
         panel_type = params[0]
         if panel_type == "admin":
-            if user_id in data['config']['admins']:
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(
-                    types.InlineKeyboardButton("📊 إحصائيات اليوم", callback_data="cmd:stats_today"),
-                    types.InlineKeyboardButton("📅 إحصائيات مخصصة", callback_data="cmd:stats_custom"),
-                    types.InlineKeyboardButton("🔄 تصفير الكل", callback_data="cmd:reset_all"),
-                    types.InlineKeyboardButton("💰 تحديد الأجر", callback_data="cmd:set_rate_prompt")
-                )
-                bot.edit_message_text("👨‍💻 **لوحة تحكم المشرف**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
-            else:
-                bot.answer_callback_query(call.id, "🚫 هذه الخدمة للمشرفين فقط.", show_alert=True)
+            if user_id not in data['config']['admins']:
+                return bot.answer_callback_query(call.id, "🚫 هذه الخدمة للمشرفين فقط.", show_alert=True)
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("📊 إحصائيات اليوم", callback_data="cmd:stats_today"),
+                types.InlineKeyboardButton("📅 إحصائيات مخصصة", callback_data="cmd:stats_custom"),
+                types.InlineKeyboardButton("🏆 لوحة الصدارة", callback_data="cmd:leaderboard"),
+                types.InlineKeyboardButton("🔄 تصفير الكل", callback_data="cmd:reset_all"),
+                types.InlineKeyboardButton("💰 تحديد الأجر", callback_data="cmd:set_rate_prompt")
+            )
+            bot.edit_message_text("👨‍💻 **لوحة تحكم المشرف**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
         
         elif panel_type == "worker":
-            if str(user_id) in data['config']['workers']:
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                markup.add(
-                    types.InlineKeyboardButton("📄 تقريري اليومي", callback_data="cmd:report_today"),
-                    types.InlineKeyboardButton("📅 تقريري المخصص", callback_data="cmd:report_custom")
-                )
-                bot.edit_message_text("👷‍♂️ **لوحة تحكم العامل**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
-            else:
-                bot.answer_callback_query(call.id, "🚫 هذه الخدمة غير متوفرة لك.", show_alert=True)
+            if str(user_id) not in data['config']['workers']:
+                return bot.answer_callback_query(call.id, "🚫 هذه الخدمة غير متوفرة لك.", show_alert=True)
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("📄 تقريري اليومي", callback_data="cmd:report_today"),
+                types.InlineKeyboardButton("📅 تقريري المخصص", callback_data="cmd:report_custom"),
+                types.InlineKeyboardButton("🏆 لوحة الصدارة", callback_data="cmd:leaderboard")
+            )
+            bot.edit_message_text("👷‍♂️ **لوحة تحكم العامل**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
-    # --- توجيه أوامر المطور (الإرشادية) ---
+    # Developer Panel Logic
     elif action == "dev":
+        if user_id != data['config']['main_admin']: return bot.answer_callback_query(call.id, "🚫 للمطور فقط.")
         command_type = params[0]
-        if command_type == "add_worker_prompt":
-            bot.send_message(call.message.chat.id, "لإضافة عامل، أرسل الأمر:\n`/اضافة_عامل [ID] [الاسم] [اليوزر] [الأجرة]`")
-        elif command_type == "remove_worker_prompt":
-            bot.send_message(call.message.chat.id, "لحذف عامل، أرسل الأمر:\n`/حذف_عامل [ID]`")
-        elif command_type == "reset_worker_prompt":
-            bot.send_message(call.message.chat.id, "لتصفير مستحقات عامل، أرسل الأمر:\n`/تصفير_عامل [ID]`")
-        elif command_type == "backup":
-            backup_command(call.message)
-        bot.answer_callback_query(call.id) # Acknowledge the press
+        if command_type == "manage_permissions":
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                types.InlineKeyboardButton("⬆️ ترقية مشرف", callback_data="dev:promote_list"),
+                types.InlineKeyboardButton("⬇️ تخفيض مشرف", callback_data="dev:demote_list")
+            )
+            bot.edit_message_text("👑 **إدارة الصلاحيات**", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        elif command_type == "promote_list":
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for worker_id_str, info in data['config']['workers'].items():
+                worker_id = int(worker_id_str)
+                if worker_id not in data['config']['admins']:
+                    markup.add(types.InlineKeyboardButton(f"⬆️ {info['name']}", callback_data=f"dev:promote:{worker_id}"))
+            markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="dev:manage_permissions"))
+            bot.edit_message_text("اختر العامل لترقيته:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        elif command_type == "promote":
+            user_to_promote = int(params[1])
+            if user_to_promote not in data['config']['admins']:
+                data['config']['admins'].append(user_to_promote)
+                update_data(data)
+                bot.answer_callback_query(call.id, "✅ تم الترقية بنجاح!")
+            call.data = "dev:promote_list"
+            handle_callbacks(call) # Refresh list
+        elif command_type == "demote_list":
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for admin_id in data['config']['admins']:
+                if admin_id != data['config']['main_admin']:
+                    worker_info = data['config']['workers'].get(str(admin_id))
+                    markup.add(types.InlineKeyboardButton(f"⬇️ {worker_info['name']}", callback_data=f"dev:demote:{admin_id}"))
+            markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="dev:manage_permissions"))
+            bot.edit_message_text("اختر المشرف لتخفيضه:", call.message.chat.id, call.message.message_id, reply_markup=markup)
+        elif command_type == "demote":
+            user_to_demote = int(params[1])
+            if user_to_demote in data['config']['admins'] and user_to_demote != data['config']['main_admin']:
+                data['config']['admins'].remove(user_to_demote)
+                update_data(data)
+                bot.answer_callback_query(call.id, "✅ تم التخفيض بنجاح!")
+            call.data = "dev:demote_list"
+            handle_callbacks(call) # Refresh list
+        else: # Prompts for text commands
+            prompts = {
+                "add_worker_prompt": "لإضافة عامل، أرسل الأمر:\n`/اضافة_عامل [ID] [الاسم] [اليوزر] [الأجرة]`",
+                "remove_worker_prompt": "لحذف عامل، أرسل الأمر:\n`/حذف_عامل [ID]`",
+                "reset_worker_prompt": "لتصفير مستحقات عامل، أرسل الأمر:\n`/تصفير_عامل [ID]`"
+            }
+            if command_type in prompts: bot.send_message(call.message.chat.id, prompts[command_type])
+            elif command_type == "backup": backup_command(call.message)
+            bot.answer_callback_query(call.id)
 
-    # --- توجيه الأوامر التنفيذية ---
+    # Command Execution Logic
     elif action == "cmd":
         command_type = params[0]
-        if command_type == "report_today": daily_report_command(call.message, from_button=True)
+        if command_type == "report_today": daily_report_command(call.message)
         elif command_type == "report_custom": bot.send_message(call.message.chat.id, "لعرض تقرير مخصص، أرسل الأمر:\n`/تقريري [YYYY-MM-DD] [YYYY-MM-DD]`")
-        elif command_type == "stats_today": custom_team_report_command(call.message, from_button=True)
+        elif command_type == "stats_today": custom_team_report_command(call.message)
         elif command_type == "stats_custom": bot.send_message(call.message.chat.id, "لعرض إحصائيات مخصصة، أرسل الأمر:\n`/احصائيات [YYYY-MM-DD] [YYYY-MM-DD]`")
         elif command_type == "reset_all": reset_command(call.message)
+        elif command_type == "leaderboard": leaderboard_command(call.message)
         elif command_type == "set_rate_prompt": bot.send_message(call.message.chat.id, "لتحديد أجر عامل، أرسل الأمر:\n`/تحديد_الاجر [ID] [الأجرة الجديدة]`")
         bot.answer_callback_query(call.id)
     
-    # --- توجيه أوامر التأكيد ---
+    # Confirmation Logic
     elif action == "confirm_reset": handle_reset_callback(call)
-
 
 # --- معالجات الأوامر النصية ---
 @bot.message_handler(func=lambda message: str(message.from_user.id) in get_data()['config']['workers'] and message.chat.type in ['group', 'supergroup'] and not message.text.startswith('/'))
 def handle_new_order(message):
     data = get_data(); quantity = parse_quantity(message.text)
     if not quantity: return
-    if data.get("group_chat_id") is None: data["group_chat_id"] = message.chat.id
+    if data.get("group_chat_id") is None: data["group_chat_id"] = message.chat.id; update_data(data)
     requester_info = data['config']['workers'].get(str(message.from_user.id), {})
     new_order = {
         "message_id": message.message_id, "chat_id": message.chat.id, "text": message.text, "quantity": quantity,
         "requester_id": message.from_user.id, "requester_name": requester_info.get("name"), "status": "pending",
-        "worker_id": None, "worker_name": None, "paid": False,
+        "worker_id": None, "worker_name": None, "paid": False, "alert_sent": False,
         "request_time": datetime.now().isoformat(), "completion_time": None }
     data["orders"].append(new_order); update_data(data)
 
@@ -180,7 +225,7 @@ def handle_order_completion(message):
     try: bot.delete_message(chat_id, message.message_id)
     except Exception as e: print(f"O7 ERROR: Could not delete 'تم' message. Check permissions. {e}")
 
-# ... (Financial report generation logic remains the same) ...
+# --- نظام التقارير المالي ---
 def generate_financial_report(message, start_date, end_date, for_user_id=None):
     data = get_data()
     end_date_inclusive = end_date + timedelta(days=1)
@@ -192,8 +237,7 @@ def generate_financial_report(message, start_date, end_date, for_user_id=None):
     if not filtered_orders:
         report_text = f"{report_title}\n\nلا يوجد عمل مسجل في هذه الفترة."
     else:
-        report_text = f"{report_title}\n\n"
-        worker_summary = {}
+        report_text = f"{report_title}\n\n"; worker_summary = {}
         for order in filtered_orders:
             worker_id_str, name = str(order.get("worker_id")), order.get("worker_name", "غير معروف")
             if name not in worker_summary: worker_summary[name] = {"count": 0, "total_quantity": 0, "id": worker_id_str}
@@ -209,7 +253,7 @@ def generate_financial_report(message, start_date, end_date, for_user_id=None):
 
 # --- معالجات الأوامر النصية للتنفيذ ---
 @bot.message_handler(commands=['تقرير'])
-def daily_report_command(message, from_button=False):
+def daily_report_command(message):
     data = get_data()
     if str(message.from_user.id) not in data['config']['workers']: return bot.reply_to(message, "🚫 هذه الخدمة غير متوفرة لك.")
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -226,10 +270,10 @@ def custom_personal_report_command(message):
     except ValueError: bot.reply_to(message, "⚠️ صيغة التاريخ خاطئة: `YYYY-MM-DD`")
 
 @bot.message_handler(commands=['احصائيات'])
-def custom_team_report_command(message, from_button=False):
+def custom_team_report_command(message):
     data = get_data(); parts = message.text.split()
     if message.from_user.id not in data['config']['admins']: return bot.reply_to(message, "🚫 هذه الخدمة غير متوفرة لك.")
-    if len(parts) == 1 or from_button:
+    if len(parts) == 1:
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         return generate_financial_report(message, today, today)
     if len(parts) != 3: return bot.reply_to(message, "صيغة خاطئة. استخدم:\n/احصائيات [YYYY-MM-DD] [YYYY-MM-DD]")
@@ -237,6 +281,23 @@ def custom_team_report_command(message, from_button=False):
         start_date, end_date = datetime.strptime(parts[1], '%Y-%m-%d'), datetime.strptime(parts[2], '%Y-%m-%d')
         generate_financial_report(message, start_date, end_date)
     except ValueError: bot.reply_to(message, "⚠️ صيغة التاريخ خاطئة: `YYYY-MM-DD`")
+
+@bot.message_handler(commands=['لوحة_الصدارة'])
+def leaderboard_command(message):
+    data = get_data()
+    if str(message.from_user.id) not in data['config']['workers']: return bot.reply_to(message, "🚫 هذه الخدمة غير متوفرة لك.")
+    seven_days_ago = datetime.now() - timedelta(days=7)
+    recent_orders = [o for o in data["orders"] if o["status"] == "completed" and o.get("completion_time") and datetime.fromisoformat(o["completion_time"]) >= seven_days_ago]
+    if not recent_orders: return bot.reply_to(message, "🏆 **لوحة الصدارة الأسبوعية**\n\nلا يوجد عمل مسجل في آخر 7 أيام.")
+    leaderboard = {};
+    for order in recent_orders:
+        name, quantity = order.get("worker_name", "غير معروف"), order.get("quantity", 0)
+        leaderboard[name] = leaderboard.get(name, 0) + quantity
+    sorted_workers = sorted(leaderboard.items(), key=lambda item: item[1], reverse=True)
+    report_text = "🏆 **لوحة الصدارة لأفضل العمال (آخر 7 أيام)**\n\n"; medals = ["🥇", "🥈", "🥉"]
+    for i, (worker, total_quantity) in enumerate(sorted_workers):
+        medal = medals[i] if i < 3 else "🔹"; report_text += f"{medal} *{worker}*: {total_quantity} وحدة\n"
+    bot.reply_to(message, report_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['اضافة_عامل'])
 def add_worker_command(message):
@@ -333,8 +394,39 @@ def backup_command(message):
     except Exception as e:
         bot.reply_to(message, "حدث خطأ أثناء إنشاء النسخة الاحتياطية."); print(f"Backup Error: {e}")
 
-# --- نظام التشغيل ---
+# --- نظام التشغيل والجدولة ---
+def check_pending_orders():
+    """يفحص الطلبات المعلقة ويرسل تنبيهات."""
+    data = get_data()
+    group_id = data.get('group_chat_id')
+    if not group_id: return
+
+    now = datetime.now()
+    alert_threshold = timedelta(minutes=30)
+    changed = False
+
+    for order in data.get('orders', []):
+        if order.get('status') == 'pending' and not order.get('alert_sent'):
+            request_time = datetime.fromisoformat(order['request_time'])
+            if now - request_time > alert_threshold:
+                alert_text = f"🔔 **تنبيه: طلب معلق** 🔔\n\nالطلب \"{order.get('text', 'N/A')}\" لم يتم تنفيذه منذ أكثر من 30 دقيقة."
+                try: bot.send_message(group_id, alert_text, parse_mode='Markdown')
+                except Exception as e: print(f"Failed to send alert to group {group_id}. Error: {e}")
+                order['alert_sent'] = True
+                changed = True
+    
+    if changed:
+        update_data(data)
+
+def run_scheduler():
+    schedule.every(5).minutes.do(check_pending_orders)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
 if __name__ == "__main__":
     get_data() # Ensure data structure exists on first run
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
     print("O7 Bot System: Polling for messages...")
     bot.polling(none_stop=True)
