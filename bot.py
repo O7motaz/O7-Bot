@@ -35,16 +35,12 @@ USER_DATA = {
     5615500221: "معتز"
 }
 
-# --- ((( التعديل هنا ))) ---
-# تم تعديل هذه الدالة لتتعامل مع الرسائل النصية
+# --- دوال الأوامر (تبقى كما هي) ---
 async def done_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     user_name = USER_DATA.get(user.id, user.first_name)
-    
-    # تقسيم الرسالة للحصول على الكمية
     parts = update.message.text.split()
     
-    # التحقق من أن الرسالة تحتوي على الكمية
     if len(parts) < 2 or not parts[1].isdigit():
         await update.message.reply_text("❌ خطأ: يرجى إدخال الكمية المنجزة بعد الأمر.\nمثال: `/تم 150`")
         return
@@ -61,7 +57,6 @@ async def done_command(update: Update, context: CallbackContext) -> None:
     
     await update.message.reply_text(f"✅ تم تسجيل {quantity} تعزيز باسمك يا {user_name}!")
 
-# --- أوامر التقارير (تبقى كما هي بدون تغيير) ---
 async def daily_report_command(update: Update, context: CallbackContext) -> None:
     today_start = datetime.combine(datetime.now().date(), time.min)
     today_end = datetime.combine(datetime.now().date(), time.max)
@@ -131,18 +126,28 @@ def main() -> None:
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # --- ((( التعديل هنا ))) ---
-    # Regex: للبحث عن الكلمات التي تريدها في بداية الرسالة
-    # هذا الفلتر يقبل الآن الأوامر العربية والإنجليزية
+    # --- ((( التعديل الجذري هنا ))) ---
+    # تم تحويل جميع الأوامر التي لها أسماء عربية إلى MessageHandler
+    
+    # فلتر لأمر الإنجاز
     done_filter = filters.Regex(r'^(?:/done|/تم|/انجاز)\b')
-    
     application.add_handler(MessageHandler(done_filter, done_command))
-    
-    # الأوامر الإنجليزية تبقى كما هي لأنها لا تخالف القواعد
-    application.add_handler(CommandHandler(["daily_report", "يومي"], daily_report_command))
-    application.add_handler(CommandHandler(["full_report", "مفصل"], full_report_command))
-    application.add_handler(CommandHandler(["payment", "مستحقات"], calculate_payment_command))
-    application.add_handler(CommandHandler(["reset", "تصفير"], reset_command))
+
+    # فلتر للتقرير اليومي
+    daily_report_filter = filters.Regex(r'^(?:/daily_report|/يومي)\b')
+    application.add_handler(MessageHandler(daily_report_filter, daily_report_command))
+
+    # فلتر للتقرير المفصل
+    full_report_filter = filters.Regex(r'^(?:/full_report|/مفصل)\b')
+    application.add_handler(MessageHandler(full_report_filter, full_report_command))
+
+    # فلتر لحساب المستحقات
+    payment_filter = filters.Regex(r'^(?:/payment|/مستحقات)\b')
+    application.add_handler(MessageHandler(payment_filter, calculate_payment_command))
+
+    # فلتر لإعادة الضبط
+    reset_filter = filters.Regex(r'^(?:/reset|/تصفير)\b')
+    application.add_handler(MessageHandler(reset_filter, reset_command))
 
     logging.info("البوت قيد التشغيل...")
     application.run_polling()
